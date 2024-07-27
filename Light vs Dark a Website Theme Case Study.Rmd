@@ -1,0 +1,255 @@
+---
+title: "Light vs Dark: a Website Theme Case Study"
+author: "Andrey Altukhov"
+date: "2024-07-21"
+output: html_document
+---
+
+## Exposition
+
+My name is Andrey, I am a data analyst student and today we will look at a problem given to us by the fictional "Master's Margarita" indian bookstore chain.
+
+The bookstore is looking to optimize its website design to improve user **engagement** and ultimately increase book **purchases**;
+it currently has two themes: “Light Theme” and “Dark Theme.”
+
+We are given the task to conduct **A/B testing**, a comparison of both themes, to determine which theme leads to better user engagement and higher conversion rates for book purchases.
+
+The data available is data **collected directly from the bookstore's website**, which makes it a reliable and safe source, directly appliable for solving our problem.
+
+Our **objective** is to finsih data cleaning and analysis, then give a presentation to the bookstore website manager to present our findings.
+
+### Data Exploration
+
+Now that we set up our case problem and context, let's take a look at our data.
+It is formatted as a **single .csv**, which means that I won't be able to show my JOINs in this case study. As mentioned before, we have this data from a **primary source** and it is reliable, original, current, cited and comprehensive, as we'll see now.
+No license issues are involved, since the data is **collected from customers by the company**. 
+
+To see the source of the data, click [here](https://statso.io/light-theme-and-dark-theme-case-study/)
+
+The data collected by the bookstore contains user interactions and engagement metrics for both the Light Theme and Dark Theme. The dataset includes the following key features:
+
+ - Theme: dark or light
+ - Click Through Rate: The proportion of the users who click on        links or buttons on the website.
+ - Conversion Rate: The percentage of users who signed up on the       platform after visiting for the first time.
+ - Bounce Rate: The percentage of users who leave the website          without further interaction after visiting a single page.
+ - Scroll Depth: The depth to which users scroll through the website    pages.
+ - Age: The age of the user.
+ - Location: The location of the user.
+ - Session Duration: The duration of the user’s session on the         website.
+ - Purchases: Whether the user purchased the book (Yes/No).
+ - Added_to_Cart: Whether the user added books to the cart (Yes/No).
+ 
+ NB: the data has already been pre cleaned, as it contains no user_id and is completely anonymous.
+ 
+
+### Data Storage and Preview
+
+Now that we have our data source and meta data, we'll download it on our local drive.
+We can see that is a very small dataset, weighting only 109ko, which makes it perfect for pre visualization in Google Sheets.
+
+However, for training and learning purposes, we will be using another new tool: **MySQL**;
+this open-source relational database management system is known for it's popularity, better suitability for smaller datasets and infrastructural ease of use, making it  the perfect tool for this type of situation, having small and structured data.
+
+## Data Cleaning
+
+Having both our data  and the necessary tool (MySQL) to clean it,
+We apply what we learned step by step to ensure that we:
+
+```{r setup, include=FALSE}
+options(repos = c(CRAN = "https://cloud.r-project.org/"))  # Set CRAN mirror
+```
+
+
+```{r eval=TRUE, include=FALSE}
+install.packages("RMySQL")
+install.packages("DBI")
+library(DBI)
+library(RMySQL)
+```
+
+```{r connection, eval=TRUE, include=FALSE}
+# Create a connection to your database
+con <- dbConnect(RMySQL::MySQL(), 
+                 dbname = "theme_bookstore", 
+                 host = "127.0.0.1", 
+                 user = "root", 
+                 password = "Adibou15!")
+                 
+```
+
+- Removed duplicates (code removed for RMarkdown, made creating a new table and using DISTINCT)
+
+```{sql eval=FALSE, connection=con, include=FALSE}
+-- We need to create a new table with unique records, to not change the dataset for everyone, and to be able to retrieve it if an error occurs
+-- We can remove duplicates at the same time using DISTINCT
+
+CREATE TABLE dirty_data AS
+SELECT DISTINCT*
+FROM theme_bookstore.website_ab_test;
+```
+
+- Handle Null Values
+
+```{sql, connection=con}
+
+UPDATE dirty_data
+SET 
+    `Click Through Rate` = COALESCE(`Click Through Rate`, 0),
+    `Conversion Rate` = COALESCE(`Conversion Rate`, 0),
+    `Bounce Rate` = COALESCE(`Bounce Rate`, 0),
+    `Scroll_Depth` = COALESCE(`Scroll_Depth`, 0),
+    `Age` = COALESCE(`Age`, 0),
+    `Location` = COALESCE(`Location`, 'Unknown'),
+    `Session_Duration` = COALESCE(`Session_Duration`, 0),
+    `Purchases` = CASE COALESCE(`Purchases`, 'no') -- the dirty data attributes yes-no answers as strings, we'll have booleans for functionality
+                   WHEN 'yes' THEN 1
+                   ELSE 0
+                 END,
+    `Added_to_Cart` = CASE COALESCE(`Added_to_Cart`, 'no')
+                       WHEN 'yes' THEN 1
+                       ELSE 0
+                     END;
+```
+
+- Remove rows with outlier values
+
+```{sql, connection=con}
+DELETE FROM dirty_data
+WHERE 
+    `Click Through Rate` < 0 OR `Click Through Rate` > 1 OR
+    `Conversion Rate` < 0 OR `Conversion Rate` > 1 OR
+    `Bounce Rate` < 0 OR `Bounce Rate` > 1 OR
+    `Scroll_Depth` < 0 OR 
+    `Age` < 0 OR 
+    `Session_Duration` < 0;
+```
+
+- Ensure data types are correct
+
+```{sql, connection=con}
+ALTER TABLE dirty_data
+MODIFY COLUMN `Click Through Rate` FLOAT,
+MODIFY COLUMN `Conversion Rate` FLOAT,
+MODIFY COLUMN `Bounce Rate` FLOAT,
+MODIFY COLUMN `Scroll_Depth` INT,
+MODIFY COLUMN `Age` INT,
+MODIFY COLUMN `Location` VARCHAR(255), -- 255 is a general way of using 255 characters maximum for storage, no space wasted
+MODIFY COLUMN `Session_Duration` INT,
+MODIFY COLUMN `Purchases` TINYINT(1), -- Changed to boolean (TINYINT), a common way of storing booleans we found online
+MODIFY COLUMN `Added_to_Cart` TINYINT(1); -- Changed to boolean (TINYINT);
+```
+
+- and finally save our cleaned data (Code hidden so RMarkdown doesn't panic)
+
+```{sql eval=FALSE, connection=con, include=FALSE}
+CREATE TABLE cleaned_data AS
+SELECT *
+FROM dirty_data;
+
+-- trouble exporting new table because of secure-priv
+```
+
+## Data Analysis
+
+With our data cleaned, we can start our *A/B test* by providing our hypotheses:
+
+- **Null Hypothesis (H0)**: There is no difference in user engagement between the light and dark themes.
+- **Alternative Hypothesis (H1)**: There is a difference in user engagement  between the light and dark themes.
+
+To test our hypothesis, we will be using **R**, a powerful language for data analysis and visualizations, which will be helpful to understand and explain our data better.
+
+Different statistical tests exist for A/B testing depending on our variables such as shown below:
+
+![test choice tree](https://miro.medium.com/v2/resize:fit:720/format:webp/1*Vzkwzrs4DOmBBa1LymW-PQ.png)
+
+Following our tree, we can use the t-test, specifically the **independent t-test** because we don’t have all the information on the underlying population distribution, or variance, with our two themes being the two independent variables. It presents a margin of error, which is often accepted at 95% accuracy.
+
+A t-test evaluates whether the difference between group means is **statistically significant** by comparing the p-value, the probability of observing the data under the null hypothesis, to a predetermined alpha level,the threshold for significance; where a **p-value less than alpha indicates rejection of the null hypothesis**.
+
+We would be tempted to look at purchases to compare the two themes, however that would be a mistake as the purchase is the last act of the customer, that can be influenced by too may factors other than the website's theme.
+the Click Through Rate, Conversion Rate and Bounce Rate are the metrics we are looking for, as they are known to be more affected by the initial response of customers.
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(ggplot2)
+
+# Load the dataset
+data <- read.csv('C:/Users/altuk/Desktop/Case Studies/cleaned_bookstore_data.csv', fileEncoding = "UTF-8", sep = ';' )
+
+# Filter the data for dark and light themes
+dark_theme <- filter(data, Theme == 'Dark Theme')
+light_theme <- filter(data, Theme == 'Light Theme')
+
+# Extract CTR, Conversion Rate and Bounce Rate for each theme
+dark_ctr <- dark_theme$Click.Through.Rate
+light_ctr <- light_theme$Click.Through.Rate
+
+dark_bounce_rate <- dark_theme$Bounce.Rate
+light_bounce_rate <- light_theme$Bounce.Rate
+
+dark_conversion_rate <- dark_theme$Conversion.Rate
+light_conversion_rate <- light_theme$Conversion.Rate
+
+# Perform an independent two-sample t-test for Click Through Rate
+t_test_ctr <- t.test(dark_ctr, light_ctr, alternative = "two.sided", var.equal = FALSE)
+
+# Perform an independent two-sample t-test for Conversion Rate
+t_test_conversion <- t.test(dark_conversion_rate, light_conversion_rate, alternative = "two.sided", var.equal = FALSE)
+
+# Perform an independent two-sample t-test for Bounce Rate
+t_test_bounce <- t.test(dark_bounce_rate, light_bounce_rate, alternative = "two.sided", var.equal = FALSE)
+```
+
+```{r echo=TRUE}
+# Interpret the results
+alpha <- 0.05  # significance level
+
+print_test_results <- function(test_result, metric_name) {
+  cat("\n", toupper(metric_name), "T-Test Results:\n")
+  print(test_result)
+  
+  if (test_result$p.value < alpha) {
+    cat("Reject the null hypothesis (H0) for", metric_name, ". There is a significant difference between the themes.\n")
+  } else {
+    cat("Fail to reject the null hypothesis (H0) for", metric_name, ". There is no significant difference between the themes.\n")
+  }
+}
+
+print_test_results(t_test_ctr, "Click Through Rate")
+print_test_results(t_test_conversion, "Conversion Rate")
+print_test_results(t_test_bounce, "Bounce Rate")
+```
+
+```{r echo=TRUE}
+# Prepare data for visualization
+combined_data <- rbind(
+  data.frame(Theme = "Dark Theme", Metric = "Click Through Rate", Value = dark_ctr),
+  data.frame(Theme = "Light Theme", Metric = "Click Through Rate", Value = light_ctr),
+  data.frame(Theme = "Dark Theme", Metric = "Conversion Rate", Value = dark_conversion_rate),
+  data.frame(Theme = "Light Theme", Metric = "Conversion Rate", Value = light_conversion_rate),
+  data.frame(Theme = "Dark Theme", Metric = "Bounce Rate", Value = dark_bounce_rate),
+  data.frame(Theme = "Light Theme", Metric = "Bounce Rate", Value = light_bounce_rate)
+)
+
+# Create boxplots for visualization
+ggplot(combined_data, aes(x = Theme, y = Value, fill = Theme)) +
+  geom_boxplot() +
+  facet_wrap(~ Metric, scales = "free_y", ncol = 1) +
+  labs(title = "Metrics by Theme", x = "Theme", y = "Rates") +
+  theme_minimal() +
+  scale_fill_manual(values = c("darkblue", "lightblue")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+### Results and Recommendations
+
+The results for our t-tests were positive, meaning we rejected the Null Hypothesis H0, for Click Through Rate
+and negative for both Conversion Rate and Bounce Rate, meaning we failed to reject H0;
+Therefore, we can be confident that the difference in themes has an effect on the CTR, giving a **slight advantage** to the Dark Theme. However, from the perspective of the Bounce and Conversion Rates, both themes offer a **similar performance**.
+
+The bookstore's website can therefore adopt the dark theme for having an increased Click Through Rate, which is an important metric of a website and is significant of a more appealing theme for customers.
+My recommendation would be to implement both themes for the website, based on our failure to reject the two other key metrics, as we cannot unanimously favor the dark theme and confirm that the vast majority of customers are seriously impacted by our choice of theme. This way, we could offer our customers the choice to customize the website to their own preferences, and not miss out on the absence of one theme.
+
+
+
